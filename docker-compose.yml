@@ -1,0 +1,8 @@
+services:
+  mtg:
+    image: nineseconds/mtg:2
+    container_name: mtg-proxy
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config.toml:/config.toml:ro
