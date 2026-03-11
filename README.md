@@ -1,35 +1,35 @@
 # Telegram MTProto Proxy
 
-Простой в развёртывании MTProto прокси для Telegram с поддержкой FakeTLS для обхода DPI-блокировок.
+Easy-to-deploy MTProto proxy for Telegram with FakeTLS support to bypass DPI blocking.
 
-Использует [mtg v2](https://github.com/9seconds/mtg) — быстрый и надёжный прокси на Go.
+Built on [mtg v2](https://github.com/9seconds/mtg) — a fast and reliable Go-based proxy.
 
-## Возможности
+## Features
 
-- **FakeTLS** — трафик маскируется под обычный HTTPS, DPI не может отличить его от обычного веб-трафика
-- **Защита от replay-атак** — встроенная защита от активного зондирования
-- **Минимальные ресурсы** — работает на VPS с 512MB RAM и 1 vCPU
-- **Один секрет на всех** — одна ссылка для подключения всех клиентов
+- **FakeTLS** — traffic is disguised as regular HTTPS, making it indistinguishable from normal web traffic for DPI
+- **Replay attack protection** — built-in defense against active probing
+- **Minimal resources** — runs on a VPS with 512MB RAM and 1 vCPU
+- **Single secret for everyone** — one link to connect all clients
 
-## Требования
+## Requirements
 
-- VPS за пределами РФ (DigitalOcean, Hetzner, Vultr и т.д.)
-- Docker и Docker Compose
-- Свой домен с A-записью на IP сервера (опционально, но рекомендуется для лучшей маскировки)
+- VPS outside of Russia (DigitalOcean, Hetzner, Vultr, etc.)
+- Docker and Docker Compose
+- Own domain with an A record pointing to server IP (optional, but recommended for better disguise)
 
-## Быстрый старт
+## Quick Start
 
-### 1. Подготовка домена (опционально)
+### 1. Prepare domain (optional)
 
-Для лучшей маскировки создайте A-запись для поддомена, указывающую на IP вашего VPS:
+For better disguise, create an A record for a subdomain pointing to your VPS IP:
 
 ```
 proxy.example.com → 123.45.67.89
 ```
 
-Это усиливает FakeTLS — DPI увидит легитимный TLS-хендшейк с вашим доменом. Без своего домена прокси тоже работает (используется `cloudflare.com` по умолчанию).
+This strengthens FakeTLS — DPI will see a legitimate TLS handshake with your domain. The proxy works without your own domain too (`cloudflare.com` is used by default).
 
-### 2. Установка
+### 2. Installation
 
 ```bash
 git clone https://github.com/frops/telegram-proxy.git
@@ -37,99 +37,99 @@ cd telegram-proxy
 bash setup.sh
 ```
 
-Или с параметрами (без интерактивного ввода):
+Or with parameters (non-interactive):
 
 ```bash
-# Со своим доменом
+# With your own domain
 bash setup.sh --domain proxy.example.com
 
-# С кастомным портом
+# With a custom port
 bash setup.sh --domain proxy.example.com --port 8443
 
-# Без домена — используется cloudflare.com
+# Without a domain — cloudflare.com is used
 bash setup.sh --port 443
 ```
 
-Скрипт:
-1. Проверит наличие Docker
-2. Запросит домен для FakeTLS (или возьмёт из `--domain`)
-3. Сгенерирует секрет
-4. Создаст конфигурацию
-5. Запустит прокси
-6. Выведет ссылку для подключения
+The script will:
+1. Check for Docker
+2. Ask for a FakeTLS domain (or use `--domain`)
+3. Generate a secret
+4. Create configuration
+5. Start the proxy
+6. Output a connection link
 
-### 3. Подключение клиента
+### 3. Connect client
 
-После запуска скрипт выведет ссылку вида:
+After startup, the script will output a link like:
 
 ```
 tg://proxy?server=123.45.67.89&port=443&secret=ee...
 ```
 
-Откройте эту ссылку на устройстве с Telegram — прокси добавится автоматически.
+Open this link on a device with Telegram — the proxy will be added automatically.
 
-**Или вручную:** Telegram → Настройки → Данные и хранилище → Прокси → Добавить прокси → MTProto
+**Or manually:** Telegram → Settings → Data and Storage → Proxy → Add Proxy → MTProto
 
-## Управление
+## Management
 
 ```bash
-# Просмотр логов
+# View logs
 docker compose logs -f mtg
 
-# Остановка
+# Stop
 docker compose down
 
-# Перезапуск
+# Restart
 docker compose restart mtg
 
-# Статус
+# Status
 docker compose ps
 ```
 
-## Выбор домена для FakeTLS
+## Choosing a FakeTLS domain
 
-Лучше всего использовать **свой домен** с A-записью на IP сервера. Тогда при проверке DPI увидит:
+Best option is to use **your own domain** with an A record pointing to the server IP. Then DPI will see:
 - TLS SNI: `proxy.example.com`
-- Резолвинг домена → IP вашего сервера
-- Всё совпадает, подозрений нет
+- Domain resolves to your server's IP
+- Everything matches, no suspicion
 
-Если своего домена нет — не страшно. По умолчанию используется `cloudflare.com`. DPI редко проверяет соответствие IP и SNI, так что прокси будет работать.
+If you don't have your own domain — no problem. `cloudflare.com` is used by default. DPI rarely checks IP-to-SNI correspondence, so the proxy will work fine.
 
-## Безопасность
+## Security
 
-- Файл `config.toml` содержит секрет и не коммитится в git (добавлен в `.gitignore`)
-- Секрет — это единственная аутентификация; не публикуйте его в открытых каналах
-- Используйте порт 443 для максимальной маскировки под HTTPS
+- `config.toml` contains the secret and is not committed to git (added to `.gitignore`)
+- The secret is the only authentication; do not share it in public channels
+- Use port 443 for maximum HTTPS disguise
 
-## Устранение неполадок
+## Troubleshooting
 
-**Контейнер не запускается:**
+**Container doesn't start:**
 ```bash
 docker compose logs mtg
 ```
 
-**Порт 443 занят:**
+**Port 443 is occupied:**
 ```bash
-# Узнать, кто занял порт
+# Find out what's using the port
 ss -tlnp | grep 443
-# При настройке указать другой порт (например, 8443)
+# Specify a different port during setup (e.g., 8443)
 ```
 
-**Клиент не подключается:**
-- Проверьте, что файрвол VPS открывает порт 443 (TCP)
-- Убедитесь, что A-запись домена указывает на правильный IP
-- Попробуйте подключиться через другую сеть
+**Client can't connect:**
+- Check that VPS firewall allows port 443 (TCP)
+- Make sure the domain A record points to the correct IP
+- Try connecting from a different network
 
-## Структура проекта
+## Project structure
 
 ```
-├── docker-compose.yml     # Docker Compose конфигурация
-├── config.toml.template   # Шаблон конфигурации mtg
-├── setup.sh               # Скрипт автоматической настройки
+├── docker-compose.yml     # Docker Compose configuration
+├── config.toml.template   # mtg configuration template
+├── setup.sh               # Automated setup script
 ├── LICENSE                 # MIT License
-└── README.md              # Этот файл
+└── README.md              # This file
 ```
 
-## Лицензия
+## License
 
-MIT License — см. [LICENSE](LICENSE).
+MIT License — see [LICENSE](LICENSE).
