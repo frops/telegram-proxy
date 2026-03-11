@@ -157,9 +157,21 @@ main() {
     compose_cmd up -d
 
     # 10. Verify startup
-    sleep 2
-    if docker ps -q -f name=mtg-proxy -f status=running | grep -q .; then
-        ok "Proxy is running!"
+    info "Waiting for proxy to start..."
+    READY=false
+    for i in $(seq 1 10); do
+        sleep 1
+        if curl -s -o /dev/null -w '' http://127.0.0.1:3129/ 2>/dev/null; then
+            READY=true
+            break
+        fi
+    done
+
+    if [ "$READY" = true ]; then
+        ok "Proxy is running and healthy!"
+    elif docker ps -q -f name=mtg-proxy -f status=running | grep -q .; then
+        warn "Container is running but stats endpoint not responding yet"
+        warn "It may need more time. Check: docker compose logs mtg"
     else
         error "Container failed to start. Check logs:"
         echo "  docker compose logs mtg"

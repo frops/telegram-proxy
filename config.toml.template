@@ -20,3 +20,7 @@ max-size = "128KB"
 tcp = "5s"
 http = "10s"
 idle = "300s"
+
+# Stats endpoint for health checks
+[stats]
+bind-to = "127.0.0.1:3129"
