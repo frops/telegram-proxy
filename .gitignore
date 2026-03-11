@@ -1,6 +1,9 @@
 # Config with secrets
 config.toml
 
+# Generated nginx config (contains domain)
+nginx/stream-proxy.conf
+
 # Environment
 .env
 

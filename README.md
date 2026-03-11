@@ -86,6 +86,40 @@ docker compose restart mtg
 docker compose ps
 ```
 
+## Running behind nginx
+
+If nginx is already using port 443 on your server, use `--nginx-mode` to run mtg behind nginx with SNI-based routing:
+
+```bash
+bash setup.sh --domain proxy.example.com --nginx-mode
+```
+
+This configures:
+- mtg listens on `127.0.0.1:3443` (local only)
+- nginx routes traffic by SNI: `proxy.example.com` → mtg, everything else → your existing HTTPS site
+
+### Setup steps
+
+1. Run setup with `--nginx-mode`:
+   ```bash
+   bash setup.sh --domain proxy.example.com --nginx-mode
+   ```
+
+2. Change your existing nginx HTTPS listener from `listen 443 ssl` to `listen 127.0.0.1:8443 ssl`
+
+3. Copy the generated stream config:
+   ```bash
+   sudo cp nginx/stream-proxy.conf /etc/nginx/conf.d/stream-mtg.conf
+   ```
+   **Note:** The `stream` block must be at the top level of `nginx.conf` (same level as `http`), not inside the `http` block. You may need to add `include` directly in `nginx.conf` or move the config accordingly.
+
+4. Verify and reload:
+   ```bash
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+The Telegram connection link will use port 443 — traffic flows through nginx transparently.
+
 ## Choosing a FakeTLS domain
 
 Best option is to use **your own domain** with an A record pointing to the server IP. Then DPI will see:
@@ -130,11 +164,14 @@ docker inspect --format='{{.State.Health.Status}}' mtg-proxy
 docker compose logs mtg
 ```
 
-**Port 443 is occupied:**
+**Port 443 is occupied (e.g., by nginx):**
 ```bash
 # Find out what's using the port
 ss -tlnp | grep 443
-# Specify a different port during setup (e.g., 8443)
+# Option 1: Use --nginx-mode to share port 443 via SNI routing
+bash setup.sh --domain proxy.example.com --nginx-mode
+# Option 2: Use a different port
+bash setup.sh --port 8443
 ```
 
 **Client can't connect:**
@@ -152,12 +189,14 @@ ss -tlnp | grep 443
 ## Project structure
 
 ```
-├── docker-compose.yml     # Docker Compose configuration
-├── config.toml.template   # mtg configuration template
-├── setup.sh               # Automated setup script
-├── diagnose.sh            # Diagnostic and troubleshooting script
-├── LICENSE                 # MIT License
-└── README.md              # This file
+├── docker-compose.yml                  # Docker Compose configuration
+├── config.toml.template                # mtg configuration template
+├── setup.sh                            # Automated setup script
+├── diagnose.sh                         # Diagnostic and troubleshooting script
+├── nginx/
+│   └── stream-proxy.conf.template      # nginx stream proxy template
+├── LICENSE                             # MIT License
+└── README.md                           # This file
 ```
 
 ## License

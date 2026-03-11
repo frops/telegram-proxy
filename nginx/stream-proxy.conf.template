@@ -1,0 +1,32 @@
+# nginx stream proxy for MTProto — SNI-based routing
+#
+# Routes traffic on port 443 based on TLS SNI:
+#   - {{DOMAIN}} → mtg proxy (127.0.0.1:{{MTG_PORT}})
+#   - everything else → regular HTTPS backend (127.0.0.1:{{HTTPS_BACKEND_PORT}})
+#
+# Usage:
+#   1. Move your existing nginx HTTPS "listen 443 ssl" to "listen 127.0.0.1:{{HTTPS_BACKEND_PORT}} ssl"
+#   2. Copy this file to /etc/nginx/modules-enabled/ or include it in nginx.conf
+#   3. Run: nginx -t && systemctl reload nginx
+
+stream {
+    map $ssl_preread_server_name $backend {
+        {{DOMAIN}}  mtg_backend;
+        default     web_backend;
+    }
+
+    upstream mtg_backend {
+        server 127.0.0.1:{{MTG_PORT}};
+    }
+
+    upstream web_backend {
+        server 127.0.0.1:{{HTTPS_BACKEND_PORT}};
+    }
+
+    server {
+        listen 443;
+        listen [::]:443;
+        ssl_preread on;
+        proxy_pass $backend;
+    }
+}

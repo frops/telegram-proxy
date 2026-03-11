@@ -25,13 +25,27 @@ warn() { echo -e "  ${YELLOW}[WARN]${NC} $*"; ((WARN_COUNT++)); }
 info() { echo -e "  ${CYAN}[INFO]${NC} $*"; }
 section() { echo -e "\n${CYAN}=== $* ===${NC}"; }
 
+# --- Extract bind address from config ---
+get_bind_addr() {
+    if [ -f "$CONFIG_FILE" ]; then
+        grep -oP 'bind-to\s*=\s*"\K[^"]+' "$CONFIG_FILE" 2>/dev/null || echo "0.0.0.0:443"
+    else
+        echo "0.0.0.0:443"
+    fi
+}
+
 # --- Extract port from config ---
 get_port() {
-    if [ -f "$CONFIG_FILE" ]; then
-        grep -oP 'bind-to\s*=\s*"[^"]*:(\K\d+)' "$CONFIG_FILE" 2>/dev/null || echo "443"
-    else
-        echo "443"
-    fi
+    local addr
+    addr=$(get_bind_addr)
+    echo "${addr##*:}"
+}
+
+# --- Detect nginx-mode (mtg bound to 127.0.0.1) ---
+is_nginx_mode() {
+    local addr
+    addr=$(get_bind_addr)
+    [[ "$addr" == 127.0.0.1:* ]]
 }
 
 # --- Extract secret from config ---
@@ -51,6 +65,16 @@ main() {
 
     PORT=$(get_port)
     SECRET=$(get_secret)
+    BIND_ADDR=$(get_bind_addr)
+
+    if is_nginx_mode; then
+        NGINX_MODE=true
+        EXTERNAL_PORT=443
+        info "Detected nginx-mode (mtg bound to $BIND_ADDR)"
+    else
+        NGINX_MODE=false
+        EXTERNAL_PORT="$PORT"
+    fi
 
     # ---- 1. Docker ----
     section "Docker"
@@ -131,7 +155,10 @@ main() {
         fail "Secret not found in config.toml"
     fi
 
-    info "Configured port: $PORT"
+    info "Configured bind address: $BIND_ADDR"
+    if [ "$NGINX_MODE" = true ]; then
+        info "External port: $EXTERNAL_PORT (via nginx)"
+    fi
 
     # ---- 4. Network: port listening ----
     section "Network"
@@ -155,8 +182,8 @@ main() {
         warn "Neither 'ss' nor 'netstat' available — cannot check port"
     fi
 
-    # Check if another process is using the port (not mtg)
-    if command -v ss &>/dev/null && [ -n "$CONTAINER_ID" ]; then
+    # In standalone mode, check if another process owns the port
+    if [ "$NGINX_MODE" = false ] && command -v ss &>/dev/null && [ -n "$CONTAINER_ID" ]; then
         PORT_PID=$(ss -tlnp 2>/dev/null | grep ":${PORT} " | grep -oP 'pid=\K\d+' | head -1 || true)
         if [ -n "$PORT_PID" ]; then
             PORT_PROC=$(cat /proc/"$PORT_PID"/cmdline 2>/dev/null | tr '\0' ' ' || echo "unknown")
@@ -252,7 +279,65 @@ main() {
         echo "       The server may not have outbound access to Telegram servers"
     fi
 
-    # ---- 7. TLS handshake test ----
+    # ---- 7. nginx stream proxy (nginx-mode only) ----
+    if [ "$NGINX_MODE" = true ]; then
+        section "nginx stream proxy"
+
+        if command -v nginx &>/dev/null; then
+            pass "nginx is installed"
+
+            # Check stream module
+            if nginx -V 2>&1 | grep -q "stream"; then
+                pass "nginx has stream module"
+            else
+                fail "nginx does NOT have stream module"
+                echo "       Install: sudo apt install libnginx-mod-stream (Debian/Ubuntu)"
+                echo "       Or: sudo yum install nginx-mod-stream (RHEL/CentOS)"
+            fi
+
+            # Check nginx config validity
+            if nginx -t 2>&1 | grep -q "successful"; then
+                pass "nginx configuration is valid"
+            else
+                fail "nginx configuration test failed"
+                echo "       Run: sudo nginx -t"
+            fi
+
+            # Check nginx is running
+            if pgrep -x nginx &>/dev/null; then
+                pass "nginx is running"
+            else
+                fail "nginx is NOT running"
+                echo "       Start: sudo systemctl start nginx"
+            fi
+
+            # Check that port 443 is handled by nginx (not mtg directly)
+            if command -v ss &>/dev/null; then
+                LISTENER_443=$(ss -tlnp 2>/dev/null | grep ":443 " | head -1 || true)
+                if echo "$LISTENER_443" | grep -qi "nginx"; then
+                    pass "Port 443 is owned by nginx"
+                elif [ -n "$LISTENER_443" ]; then
+                    warn "Port 443 is listening but may not be nginx: $LISTENER_443"
+                else
+                    fail "Port 443 is NOT listening — nginx may not be configured"
+                fi
+            fi
+
+            # Check mtg local port
+            if command -v ss &>/dev/null; then
+                if ss -tlnp 2>/dev/null | grep -q ":${PORT} "; then
+                    pass "mtg is listening on local port $PORT"
+                else
+                    fail "mtg is NOT listening on local port $PORT"
+                fi
+            fi
+        else
+            fail "nginx is NOT installed but nginx-mode is configured"
+            echo "       Install: sudo apt install nginx (Debian/Ubuntu)"
+        fi
+    fi
+
+    # ---- 8. TLS handshake test ----
     section "TLS handshake (local)"
 
     if command -v openssl &>/dev/null; then
@@ -291,10 +376,10 @@ main() {
         pass "External IP: $EXTERNAL_IP"
 
         # Self-test: try connecting to own port from outside perspective
-        if timeout 5 bash -c "echo >/dev/tcp/${EXTERNAL_IP}/${PORT}" 2>/dev/null; then
-            pass "Port $PORT is reachable on external IP $EXTERNAL_IP"
+        if timeout 5 bash -c "echo >/dev/tcp/${EXTERNAL_IP}/${EXTERNAL_PORT}" 2>/dev/null; then
+            pass "Port $EXTERNAL_PORT is reachable on external IP $EXTERNAL_IP"
         else
-            warn "Port $PORT may not be reachable externally on $EXTERNAL_IP"
+            warn "Port $EXTERNAL_PORT may not be reachable externally on $EXTERNAL_IP"
             echo "       This could be: firewall, cloud security group, or NAT"
         fi
     else

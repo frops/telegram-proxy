@@ -9,12 +9,17 @@ set -euo pipefail
 MTG_IMAGE="nineseconds/mtg:2"
 CONFIG_FILE="config.toml"
 TEMPLATE_FILE="config.toml.template"
+STREAM_TEMPLATE="nginx/stream-proxy.conf.template"
+STREAM_OUTPUT="nginx/stream-proxy.conf"
 DEFAULT_PORT=443
 DEFAULT_DOMAIN="cloudflare.com"
+MTG_LOCAL_PORT=3443
+HTTPS_BACKEND_PORT=8443
 
 # CLI arguments (override interactive input)
 ARG_DOMAIN=""
 ARG_PORT=""
+NGINX_MODE=false
 
 # Colors
 RED='\033[0;31m'
@@ -76,12 +81,36 @@ compose_cmd() {
     fi
 }
 
+# --- Generate nginx stream config ---
+generate_nginx_config() {
+    local domain="$1"
+
+    if [ ! -f "$STREAM_TEMPLATE" ]; then
+        error "$STREAM_TEMPLATE not found"
+        exit 1
+    fi
+
+    sed "s|{{DOMAIN}}|${domain}|g" "$STREAM_TEMPLATE" \
+        | sed "s|{{MTG_PORT}}|${MTG_LOCAL_PORT}|g" \
+        | sed "s|{{HTTPS_BACKEND_PORT}}|${HTTPS_BACKEND_PORT}|g" \
+        > "$STREAM_OUTPUT"
+
+    ok "nginx stream config generated: $STREAM_OUTPUT"
+}
+
 # --- Main script ---
 main() {
     echo ""
     echo "=========================================="
     echo "  Telegram MTProto Proxy — Setup"
     echo "=========================================="
+    echo ""
+
+    if [ "$NGINX_MODE" = true ]; then
+        info "Mode: nginx stream proxy (SNI routing)"
+    else
+        info "Mode: standalone (direct port binding)"
+    fi
     echo ""
 
     # 1. Check dependencies
@@ -114,13 +143,21 @@ main() {
     ok "Domain: $DOMAIN"
 
     # 4. Port
-    if [ -n "$ARG_PORT" ]; then
-        PORT="$ARG_PORT"
+    if [ "$NGINX_MODE" = true ]; then
+        # In nginx mode, mtg listens locally; external port is always 443
+        PORT=443
+        BIND_ADDR="127.0.0.1:${MTG_LOCAL_PORT}"
+        ok "mtg will bind to: $BIND_ADDR (nginx proxies from port 443)"
     else
-        read -rp "Port [${DEFAULT_PORT}]: " PORT
-        PORT=${PORT:-$DEFAULT_PORT}
+        if [ -n "$ARG_PORT" ]; then
+            PORT="$ARG_PORT"
+        else
+            read -rp "Port [${DEFAULT_PORT}]: " PORT
+            PORT=${PORT:-$DEFAULT_PORT}
+        fi
+        BIND_ADDR="0.0.0.0:${PORT}"
+        ok "Port: $PORT"
     fi
-    ok "Port: $PORT"
 
     # 5. Generate secret
     info "Generating secret..."
@@ -136,27 +173,33 @@ main() {
     # 6. Create config.toml
     info "Creating $CONFIG_FILE..."
     sed "s|{{SECRET}}|${SECRET}|g" "$TEMPLATE_FILE" \
-        | sed "s|0.0.0.0:443|0.0.0.0:${PORT}|g" \
+        | sed "s|0.0.0.0:443|${BIND_ADDR}|g" \
         > "$CONFIG_FILE"
 
     ok "Configuration created"
 
-    # 7. Detect external IP
+    # 7. Generate nginx stream config (nginx-mode only)
+    if [ "$NGINX_MODE" = true ]; then
+        info "Generating nginx stream config..."
+        generate_nginx_config "$DOMAIN"
+    fi
+
+    # 8. Detect external IP
     info "Detecting external IP..."
     EXTERNAL_IP=$(get_external_ip)
     ok "External IP: $EXTERNAL_IP"
 
-    # 8. Stop previous container (if any)
+    # 9. Stop previous container (if any)
     if docker ps -q -f name=mtg-proxy &>/dev/null; then
         info "Stopping previous container..."
         compose_cmd down 2>/dev/null || true
     fi
 
-    # 9. Start
+    # 10. Start
     info "Starting proxy..."
     compose_cmd up -d
 
-    # 10. Verify startup
+    # 11. Verify startup
     info "Waiting for proxy to start..."
     READY=false
     for i in $(seq 1 10); do
@@ -178,7 +221,7 @@ main() {
         exit 1
     fi
 
-    # 11. Output connection link
+    # 12. Output connection link
     echo ""
     echo "=========================================="
     echo -e "  ${GREEN}Proxy successfully started!${NC}"
@@ -193,10 +236,39 @@ main() {
     echo "  Port:   ${PORT}"
     echo "  Secret: ${SECRET}"
     echo ""
+
+    # 13. nginx-mode post-setup instructions
+    if [ "$NGINX_MODE" = true ]; then
+        echo "=========================================="
+        echo -e "  ${YELLOW}nginx configuration required${NC}"
+        echo "=========================================="
+        echo ""
+        echo "1. Change your existing nginx HTTPS listener:"
+        echo ""
+        echo "   Before:  listen 443 ssl;"
+        echo "   After:   listen 127.0.0.1:${HTTPS_BACKEND_PORT} ssl;"
+        echo ""
+        echo "2. Copy the generated stream config:"
+        echo ""
+        echo "   sudo cp ${STREAM_OUTPUT} /etc/nginx/conf.d/stream-mtg.conf"
+        echo ""
+        echo "   NOTE: The 'stream' block must be at the top level of nginx.conf"
+        echo "   (same level as 'http'), NOT inside the 'http' block."
+        echo "   If your nginx.conf has 'include /etc/nginx/conf.d/*.conf'"
+        echo "   inside 'http { }', you may need to move the include or"
+        echo "   add the stream config directly to nginx.conf."
+        echo ""
+        echo "3. Verify and reload nginx:"
+        echo ""
+        echo "   sudo nginx -t && sudo systemctl reload nginx"
+        echo ""
+    fi
+
     echo "Management:"
-    echo "  Logs:    docker compose logs -f mtg"
-    echo "  Stop:    docker compose down"
-    echo "  Restart: docker compose restart mtg"
+    echo "  Logs:      docker compose logs -f mtg"
+    echo "  Stop:      docker compose down"
+    echo "  Restart:   docker compose restart mtg"
+    echo "  Diagnose:  bash diagnose.sh"
     echo ""
 }
 
@@ -211,13 +283,23 @@ while [[ $# -gt 0 ]]; do
             ARG_PORT="$2"
             shift 2
             ;;
+        --nginx-mode)
+            NGINX_MODE=true
+            shift
+            ;;
         --help|-h)
-            echo "Usage: bash setup.sh [--domain DOMAIN] [--port PORT]"
+            echo "Usage: bash setup.sh [--domain DOMAIN] [--port PORT] [--nginx-mode]"
             echo ""
             echo "Options:"
             echo "  --domain DOMAIN  FakeTLS domain (default: ${DEFAULT_DOMAIN})"
             echo "  --port PORT      Listening port (default: ${DEFAULT_PORT})"
+            echo "  --nginx-mode     Run behind nginx with SNI-based routing on port 443"
             echo "  --help, -h       Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  bash setup.sh --domain proxy.example.com"
+            echo "  bash setup.sh --domain proxy.example.com --port 8443"
+            echo "  bash setup.sh --domain proxy.example.com --nginx-mode"
             exit 0
             ;;
         *)
