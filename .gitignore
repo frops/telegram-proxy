@@ -1,0 +1,9 @@
+# Config with secrets
+config.toml
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
