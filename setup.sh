@@ -10,6 +10,11 @@ MTG_IMAGE="nineseconds/mtg:2"
 CONFIG_FILE="config.toml"
 TEMPLATE_FILE="config.toml.template"
 DEFAULT_PORT=443
+DEFAULT_DOMAIN="cloudflare.com"
+
+# CLI-аргументы (перезаписывают интерактивный ввод)
+ARG_DOMAIN=""
+ARG_PORT=""
 
 # Цвета для вывода
 RED='\033[0;31m'
@@ -88,23 +93,33 @@ main() {
         exit 1
     fi
 
-    # 3. Запрос домена для FakeTLS
-    echo ""
-    info "FakeTLS маскирует трафик прокси под обычный HTTPS."
-    info "Рекомендуется использовать свой домен с A-записью на IP этого сервера."
-    echo ""
-    read -rp "Домен для FakeTLS (напр. proxy.example.com): " DOMAIN
+    # 3. Домен для FakeTLS
+    if [ -n "$ARG_DOMAIN" ]; then
+        DOMAIN="$ARG_DOMAIN"
+    else
+        echo ""
+        info "FakeTLS маскирует трафик прокси под обычный HTTPS."
+        info "Рекомендуется использовать свой домен с A-записью на IP этого сервера."
+        info "Нажмите Enter для использования домена по умолчанию (${DEFAULT_DOMAIN})."
+        echo ""
+        read -rp "Домен для FakeTLS [${DEFAULT_DOMAIN}]: " DOMAIN
+        DOMAIN=${DOMAIN:-$DEFAULT_DOMAIN}
+    fi
 
-    if [ -z "$DOMAIN" ]; then
-        error "Домен обязателен для FakeTLS"
-        exit 1
+    if [ "$DOMAIN" = "$DEFAULT_DOMAIN" ]; then
+        warn "Используется домен по умолчанию ($DEFAULT_DOMAIN)."
+        warn "Для лучшей маскировки рекомендуется свой домен с A-записью на IP сервера."
     fi
 
     ok "Домен: $DOMAIN"
 
     # 4. Порт
-    read -rp "Порт [${DEFAULT_PORT}]: " PORT
-    PORT=${PORT:-$DEFAULT_PORT}
+    if [ -n "$ARG_PORT" ]; then
+        PORT="$ARG_PORT"
+    else
+        read -rp "Порт [${DEFAULT_PORT}]: " PORT
+        PORT=${PORT:-$DEFAULT_PORT}
+    fi
     ok "Порт: $PORT"
 
     # 5. Генерация секрета
@@ -173,4 +188,32 @@ main() {
     echo ""
 }
 
-main "$@"
+# --- Парсинг CLI-аргументов ---
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --domain)
+            ARG_DOMAIN="$2"
+            shift 2
+            ;;
+        --port)
+            ARG_PORT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Использование: bash setup.sh [--domain ДОМЕН] [--port ПОРТ]"
+            echo ""
+            echo "Опции:"
+            echo "  --domain ДОМЕН  Домен для FakeTLS (по умолчанию: ${DEFAULT_DOMAIN})"
+            echo "  --port ПОРТ     Порт прослушивания (по умолчанию: ${DEFAULT_PORT})"
+            echo "  --help, -h      Показать эту справку"
+            exit 0
+            ;;
+        *)
+            error "Неизвестный аргумент: $1"
+            echo "Используйте --help для справки"
+            exit 1
+            ;;
+    esac
+done
+
+main
