@@ -101,6 +101,28 @@ If you don't have your own domain — no problem. `cloudflare.com` is used by de
 - The secret is the only authentication; do not share it in public channels
 - Use port 443 for maximum HTTPS disguise
 
+## Diagnostics
+
+Run the diagnostic script to check proxy health:
+
+```bash
+bash diagnose.sh
+```
+
+It checks:
+- Docker status and container health
+- Port binding and firewall rules
+- Connectivity to Telegram data centers
+- TLS handshake
+- Config validity (secret format, FakeTLS prefix)
+- External reachability
+
+The proxy also has a built-in Docker healthcheck via the stats endpoint (`127.0.0.1:3129`). Check health status:
+
+```bash
+docker inspect --format='{{.State.Health.Status}}' mtg-proxy
+```
+
 ## Troubleshooting
 
 **Container doesn't start:**
@@ -116,9 +138,16 @@ ss -tlnp | grep 443
 ```
 
 **Client can't connect:**
+- Run `bash diagnose.sh` for a full check
 - Check that VPS firewall allows port 443 (TCP)
+- Check cloud provider firewall (AWS Security Groups, DigitalOcean Firewall, etc.)
 - Make sure the domain A record points to the correct IP
 - Try connecting from a different network
+
+**Status: unavailable in Telegram:**
+- Most common cause: firewall blocking the port (both OS-level and cloud provider)
+- Verify the port is reachable: `curl -v telnet://YOUR_IP:443` from another machine
+- Check that the proxy can reach Telegram DCs: `bash diagnose.sh` (see "Telegram DC connectivity" section)
 
 ## Project structure
 
@@ -126,6 +155,7 @@ ss -tlnp | grep 443
 ├── docker-compose.yml     # Docker Compose configuration
 ├── config.toml.template   # mtg configuration template
 ├── setup.sh               # Automated setup script
+├── diagnose.sh            # Diagnostic and troubleshooting script
 ├── LICENSE                 # MIT License
 └── README.md              # This file
 ```
