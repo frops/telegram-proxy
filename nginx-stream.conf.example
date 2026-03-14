@@ -1,0 +1,81 @@
+# ============================================================================
+# nginx stream configuration for MTProto Telegram proxy (mtg)
+# ============================================================================
+#
+# mtg uses FakeTLS protocol (TCP/TLS level, NOT HTTP), so a regular
+# nginx http proxy_pass will NOT work. The stream module with ssl_preread
+# is required for SNI-based TCP routing.
+#
+# Architecture:
+#
+#   Client -> proxy.example.com:443
+#     -> nginx stream (ssl_preread reads SNI from TLS ClientHello)
+#       -> SNI = proxy.example.com -> 127.0.0.1:8443 (mtg)
+#       -> SNI = anything else     -> 127.0.0.1:8444 (nginx HTTPS backend)
+#
+# ============================================================================
+#
+# SETUP INSTRUCTIONS:
+#
+# 1. Make sure the stream module is available:
+#      docker exec <nginx-container> nginx -V 2>&1 | grep stream
+#
+#    If it's a dynamic module, add to the top of nginx.conf (before events {}):
+#      load_module modules/ngx_stream_module.so;
+#
+# 2. Copy the "stream { ... }" block below into your main nginx.conf
+#    at the TOP LEVEL (same level as the "http { ... }" block, NOT inside it).
+#
+# 3. In ALL existing HTTPS server blocks, change:
+#      listen 443 ssl;       ->  listen 8444 ssl;
+#      listen [::]:443 ssl;  ->  listen [::]:8444 ssl;
+#    Port 8444 is internal only — do NOT open it in the firewall.
+#
+# 4. Port 80 (HTTP) listeners — no changes needed.
+#
+# 5. Reload nginx:
+#      nginx -t && nginx -s reload
+#
+# IMPORTANT: The FakeTLS domain in mtg must match the SNI map below.
+# If mtg was set up with a different domain (e.g. cloudflare.com),
+# re-run setup.sh:
+#   bash setup.sh --domain proxy.example.com --port 8443
+#
+# ============================================================================
+
+stream {
+    # Route based on TLS SNI (Server Name Indication)
+    map $ssl_preread_server_name $backend {
+        proxy.example.com   mtg_backend;      # <-- replace with your domain
+        default             nginx_https_backend;
+    }
+
+    # MTProto proxy (mtg)
+    upstream mtg_backend {
+        server 127.0.0.1:8443;
+        # If nginx runs in Docker with port mapping (not host network),
+        # use the host IP instead:
+        #   server 172.17.0.1:8443;
+        # or add extra_hosts in docker-compose.yml:
+        #   extra_hosts: ["host.docker.internal:host-gateway"]
+        # and use:
+        #   server host.docker.internal:8443;
+    }
+
+    # Internal nginx HTTPS backend (moved from port 443)
+    upstream nginx_https_backend {
+        server 127.0.0.1:8444;
+    }
+
+    server {
+        listen 443;
+        listen [::]:443;
+
+        proxy_pass $backend;
+        ssl_preread on;
+
+        # Telegram connections can be long-lived
+        proxy_timeout 1h;
+        proxy_connect_timeout 10s;
+    }
+}

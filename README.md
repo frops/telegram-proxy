@@ -101,6 +101,43 @@ If you don't have your own domain — no problem. `cloudflare.com` is used by de
 - The secret is the only authentication; do not share it in public channels
 - Use port 443 for maximum HTTPS disguise
 
+## Using with nginx reverse proxy
+
+If port 443 is already occupied by nginx (serving other sites), you can route Telegram proxy traffic through nginx using the `stream` module with SNI-based routing.
+
+**Why not a regular `proxy_pass`?** mtg operates at the TCP/TLS level (FakeTLS), not HTTP. A standard nginx `http` block reverse proxy will not work. You need the `stream` module with `ssl_preread` to inspect the TLS SNI header and route traffic accordingly.
+
+### Architecture
+
+```
+Client -> your-domain.com:443
+  -> nginx stream (ssl_preread reads SNI)
+    -> SNI = your-domain.com -> 127.0.0.1:8443 (mtg)
+    -> SNI = anything else   -> 127.0.0.1:8444 (nginx HTTPS)
+```
+
+### Setup
+
+1. Run mtg on a non-standard port with your domain as the FakeTLS domain:
+   ```bash
+   bash setup.sh --domain your-domain.com --port 8443
+   ```
+
+2. Copy the stream block from [`nginx-stream.conf.example`](nginx-stream.conf.example) into your nginx's main `nginx.conf` (at the top level, next to the `http` block).
+
+3. Replace `proxy.example.com` with your actual domain in the `map` block.
+
+4. Change all existing HTTPS server blocks from `listen 443 ssl` to `listen 8444 ssl`. Port 8444 is internal only.
+
+5. Test and reload nginx:
+   ```bash
+   nginx -t && nginx -s reload
+   ```
+
+**Important:** The FakeTLS domain in mtg must match the domain in the nginx `map` block. If they don't match, SNI routing will not work.
+
+See [`nginx-stream.conf.example`](nginx-stream.conf.example) for the full configuration with comments.
+
 ## Diagnostics
 
 Run the diagnostic script to check proxy health:
@@ -152,12 +189,13 @@ ss -tlnp | grep 443
 ## Project structure
 
 ```
-├── docker-compose.yml     # Docker Compose configuration
-├── config.toml.template   # mtg configuration template
-├── setup.sh               # Automated setup script
-├── diagnose.sh            # Diagnostic and troubleshooting script
-├── LICENSE                 # MIT License
-└── README.md              # This file
+├── docker-compose.yml            # Docker Compose configuration
+├── config.toml.template          # mtg configuration template
+├── setup.sh                      # Automated setup script
+├── diagnose.sh                   # Diagnostic and troubleshooting script
+├── nginx-stream.conf.example     # Example nginx stream config for SNI routing
+├── LICENSE                       # MIT License
+└── README.md                     # This file
 ```
 
 ## License
